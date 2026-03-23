@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT 同步到思源笔记
 // @namespace    https://github.com/powcai001/chatgpt-to-siyuan-userscript
-// @version      0.3.1
+// @version      0.4.0
 // @description  将 ChatGPT 当前对话导出为 Markdown 并同步到思源笔记
 // @author       inxide
 // @license      MIT
@@ -363,6 +363,37 @@
     });
   }
 
+  async function listSiyuanNotebooks(configOverride = {}) {
+    const runtimeConfig = { ...CONFIG, ...configOverride };
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: `${runtimeConfig.siyuanBaseUrl}/api/notebook/lsNotebooks`,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${runtimeConfig.siyuanToken}`,
+        },
+        data: "{}",
+        onload: function (res) {
+          try {
+            const json = JSON.parse(res.responseText);
+            if (json.code !== 0) {
+              reject(new Error(json.msg || "获取笔记本列表失败"));
+              return;
+            }
+            const notebooks = json.data?.notebooks || [];
+            resolve(notebooks);
+          } catch (e) {
+            reject(new Error(`思源返回解析失败: ${res.responseText}`));
+          }
+        },
+        onerror: function (err) {
+          reject(err);
+        },
+      });
+    });
+  }
+
   function showToast(msg, isError = false) {
     const toast = document.createElement("div");
     toast.innerText = msg;
@@ -409,6 +440,39 @@
     wrapper.appendChild(input);
 
     return { wrapper, input };
+  }
+
+  function createSelectField(labelText) {
+    const wrapper = document.createElement("label");
+    wrapper.style.display = "block";
+
+    const label = document.createElement("div");
+    label.innerText = labelText;
+    label.style.fontSize = "13px";
+    label.style.fontWeight = "600";
+    label.style.marginBottom = "6px";
+    label.style.color = "#111827";
+
+    const select = document.createElement("select");
+    select.style.width = "100%";
+    select.style.boxSizing = "border-box";
+    select.style.padding = "10px 12px";
+    select.style.border = "1px solid #d1d5db";
+    select.style.borderRadius = "10px";
+    select.style.fontSize = "13px";
+    select.style.outline = "none";
+    select.style.background = "#fff";
+    select.style.color = "#111827";
+
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.innerText = "可点击“读取笔记本列表”自动选择";
+    select.appendChild(defaultOption);
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(select);
+
+    return { wrapper, select };
   }
 
   function openConfigModal() {
@@ -466,6 +530,7 @@
       CONFIG.notebook,
       "请输入笔记本 ID",
     );
+    const notebookSelectField = createSelectField("笔记本列表");
     const parentPathField = createField(
       "保存路径",
       CONFIG.parentPath,
@@ -476,6 +541,89 @@
       CONFIG.docTitlePrefix,
       "例如：ChatGPT会话-",
     );
+
+    const helperBar = document.createElement("div");
+    helperBar.style.display = "flex";
+    helperBar.style.alignItems = "center";
+    helperBar.style.justifyContent = "space-between";
+    helperBar.style.gap = "10px";
+    helperBar.style.marginBottom = "12px";
+
+    const helperText = document.createElement("div");
+    helperText.innerText = "可自动读取思源中的笔记本并填入下方 ID。";
+    helperText.style.fontSize = "12px";
+    helperText.style.color = "#6b7280";
+    helperText.style.flex = "1";
+
+    const loadNotebooksBtn = document.createElement("button");
+    loadNotebooksBtn.innerText = "读取笔记本列表";
+    loadNotebooksBtn.style.padding = "8px 12px";
+    loadNotebooksBtn.style.borderRadius = "10px";
+    loadNotebooksBtn.style.border = "1px solid #d1d5db";
+    loadNotebooksBtn.style.background = "#fff";
+    loadNotebooksBtn.style.color = "#111827";
+    loadNotebooksBtn.style.fontSize = "13px";
+    loadNotebooksBtn.style.fontWeight = "500";
+    loadNotebooksBtn.style.cursor = "pointer";
+
+    helperBar.appendChild(helperText);
+    helperBar.appendChild(loadNotebooksBtn);
+
+    notebookSelectField.select.addEventListener("change", () => {
+      if (notebookSelectField.select.value) {
+        notebookField.input.value = notebookSelectField.select.value;
+      }
+    });
+
+    loadNotebooksBtn.addEventListener("click", async () => {
+      try {
+        const baseUrl = baseUrlField.input.value.trim() || DEFAULT_CONFIG.siyuanBaseUrl;
+        const token = tokenField.input.value.trim();
+        if (!token || token.includes("请替换")) {
+          throw new Error("请先填写正确的思源 API Token");
+        }
+
+        loadNotebooksBtn.disabled = true;
+        loadNotebooksBtn.innerText = "读取中...";
+
+        const notebooks = await listSiyuanNotebooks({
+          siyuanBaseUrl: baseUrl,
+          siyuanToken: token,
+        });
+
+        notebookSelectField.select.innerHTML = "";
+
+        const placeholderOption = document.createElement("option");
+        placeholderOption.value = "";
+        placeholderOption.innerText = notebooks.length
+          ? "请选择一个笔记本"
+          : "未读取到笔记本";
+        notebookSelectField.select.appendChild(placeholderOption);
+
+        notebooks.forEach((notebook) => {
+          const option = document.createElement("option");
+          option.value = notebook.id;
+          option.innerText = `${notebook.name} (${notebook.id})`;
+          if (notebook.id === notebookField.input.value.trim()) {
+            option.selected = true;
+          }
+          notebookSelectField.select.appendChild(option);
+        });
+
+        if (notebooks.length === 1) {
+          notebookField.input.value = notebooks[0].id;
+          notebookSelectField.select.value = notebooks[0].id;
+        }
+
+        showToast(notebooks.length ? "笔记本列表读取成功" : "没有读取到笔记本", !notebooks.length);
+      } catch (err) {
+        console.error("[ChatGPT->思源] 读取笔记本失败", err);
+        showToast(`读取失败：${err.message || err}`, true);
+      } finally {
+        loadNotebooksBtn.disabled = false;
+        loadNotebooksBtn.innerText = "读取笔记本列表";
+      }
+    });
 
     const actions = document.createElement("div");
     actions.style.display = "flex";
@@ -526,11 +674,13 @@
       baseUrlField.wrapper,
       tokenField.wrapper,
       notebookField.wrapper,
+      helperBar,
+      notebookSelectField.wrapper,
       parentPathField.wrapper,
       prefixField.wrapper,
       actions,
     ].forEach((el, index) => {
-      if (index >= 2 && index <= 6) {
+      if (index >= 2 && index <= 8) {
         el.style.marginBottom = "12px";
       }
       modal.appendChild(el);
