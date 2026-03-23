@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT 同步到思源笔记
 // @namespace    https://github.com/powcai001/chatgpt-to-siyuan-userscript
-// @version      0.3.0
+// @version      0.3.1
 // @description  将 ChatGPT 当前对话导出为 Markdown 并同步到思源笔记
 // @author       inxide
 // @license      MIT
@@ -489,6 +489,9 @@
     cancelBtn.style.borderRadius = "10px";
     cancelBtn.style.border = "1px solid #d1d5db";
     cancelBtn.style.background = "#fff";
+    cancelBtn.style.color = "#111827";
+    cancelBtn.style.fontSize = "14px";
+    cancelBtn.style.fontWeight = "500";
     cancelBtn.style.cursor = "pointer";
     cancelBtn.addEventListener("click", () => mask.remove());
 
@@ -499,6 +502,8 @@
     saveBtn.style.border = "none";
     saveBtn.style.background = "#1677ff";
     saveBtn.style.color = "#fff";
+    saveBtn.style.fontSize = "14px";
+    saveBtn.style.fontWeight = "500";
     saveBtn.style.cursor = "pointer";
     saveBtn.addEventListener("click", () => {
       saveConfig({
