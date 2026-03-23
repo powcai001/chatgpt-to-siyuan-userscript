@@ -1,13 +1,16 @@
 // ==UserScript==
 // @name         ChatGPT 同步到思源笔记
 // @namespace    https://github.com/powcai001/chatgpt-to-siyuan-userscript
-// @version      0.2.1
+// @version      0.3.0
 // @description  将 ChatGPT 当前对话导出为 Markdown 并同步到思源笔记
 // @author       inxide
 // @license      MIT
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @connect      127.0.0.1
 // @connect      localhost
 // ==/UserScript==
@@ -15,7 +18,7 @@
 (function () {
   "use strict";
 
-  const CONFIG = {
+  const DEFAULT_CONFIG = {
     siyuanBaseUrl: "http://127.0.0.1:6806",
     siyuanToken: "请替换为你的思源API Token",
     notebook: "请替换为你的笔记本ID",
@@ -23,8 +26,48 @@
     docTitlePrefix: "ChatGPT会话-",
     debug: false,
   };
+
+  const CONFIG_STORAGE_KEY = "chatgptToSiyuanConfig";
+  let CONFIG = loadConfig();
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function getStoredValue(key, fallback) {
+    try {
+      if (typeof GM_getValue === "function") {
+        return GM_getValue(key, fallback);
+      }
+      const raw = localStorage.getItem(key);
+      return raw == null ? fallback : raw;
+    } catch (err) {
+      return fallback;
+    }
+  }
+
+  function setStoredValue(key, value) {
+    if (typeof GM_setValue === "function") {
+      GM_setValue(key, value);
+      return;
+    }
+    localStorage.setItem(key, value);
+  }
+
+  function loadConfig() {
+    try {
+      const raw = getStoredValue(CONFIG_STORAGE_KEY, "");
+      if (!raw) return { ...DEFAULT_CONFIG };
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return { ...DEFAULT_CONFIG, ...parsed };
+    } catch (err) {
+      return { ...DEFAULT_CONFIG };
+    }
+  }
+
+  function saveConfig(nextConfig) {
+    CONFIG = { ...DEFAULT_CONFIG, ...nextConfig };
+    setStoredValue(CONFIG_STORAGE_KEY, JSON.stringify(CONFIG));
   }
 
   function formatDate(date = new Date()) {
@@ -44,10 +87,10 @@
 
   function validateConfig() {
     if (!CONFIG.siyuanToken || CONFIG.siyuanToken.includes("请替换")) {
-      throw new Error("请先把 siyuanToken 改成真实的思源 API Token");
+      throw new Error("请先点击“设置思源”填写真实的思源 API Token");
     }
     if (!CONFIG.notebook || CONFIG.notebook.includes("请替换")) {
-      throw new Error("请先把 notebook 改成真实的笔记本 ID");
+      throw new Error("请先点击“设置思源”填写真实的笔记本 ID");
     }
   }
 
@@ -337,6 +380,184 @@
     setTimeout(() => toast.remove(), 2500);
   }
 
+  function createField(labelText, value, placeholder, isPassword = false) {
+    const wrapper = document.createElement("label");
+    wrapper.style.display = "block";
+
+    const label = document.createElement("div");
+    label.innerText = labelText;
+    label.style.fontSize = "13px";
+    label.style.fontWeight = "600";
+    label.style.marginBottom = "6px";
+    label.style.color = "#111827";
+
+    const input = document.createElement("input");
+    input.type = isPassword ? "password" : "text";
+    input.value = value || "";
+    input.placeholder = placeholder || "";
+    input.style.width = "100%";
+    input.style.boxSizing = "border-box";
+    input.style.padding = "10px 12px";
+    input.style.border = "1px solid #d1d5db";
+    input.style.borderRadius = "10px";
+    input.style.fontSize = "13px";
+    input.style.outline = "none";
+    input.style.background = "#fff";
+    input.style.color = "#111827";
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+
+    return { wrapper, input };
+  }
+
+  function openConfigModal() {
+    const oldMask = document.getElementById("chatgpt-to-siyuan-config-mask");
+    if (oldMask) oldMask.remove();
+
+    const mask = document.createElement("div");
+    mask.id = "chatgpt-to-siyuan-config-mask";
+    mask.style.position = "fixed";
+    mask.style.inset = "0";
+    mask.style.background = "rgba(0,0,0,0.45)";
+    mask.style.zIndex = "1000000";
+    mask.style.display = "flex";
+    mask.style.alignItems = "center";
+    mask.style.justifyContent = "center";
+    mask.addEventListener("click", (e) => {
+      if (e.target === mask) mask.remove();
+    });
+
+    const modal = document.createElement("div");
+    modal.style.width = "min(520px, calc(100vw - 32px))";
+    modal.style.maxHeight = "calc(100vh - 32px)";
+    modal.style.overflow = "auto";
+    modal.style.background = "#ffffff";
+    modal.style.borderRadius = "16px";
+    modal.style.padding = "20px";
+    modal.style.boxShadow = "0 20px 60px rgba(0,0,0,0.25)";
+
+    const title = document.createElement("div");
+    title.innerText = "思源同步配置";
+    title.style.fontSize = "18px";
+    title.style.fontWeight = "700";
+    title.style.marginBottom = "8px";
+    title.style.color = "#111827";
+
+    const desc = document.createElement("div");
+    desc.innerText = "配置会保存在浏览器本地，仅当前脚本使用。";
+    desc.style.fontSize = "13px";
+    desc.style.color = "#6b7280";
+    desc.style.marginBottom = "16px";
+
+    const baseUrlField = createField(
+      "思源地址",
+      CONFIG.siyuanBaseUrl,
+      "例如：http://127.0.0.1:6806",
+    );
+    const tokenField = createField(
+      "思源 API Token",
+      CONFIG.siyuanToken,
+      "请输入思源 API Token",
+      true,
+    );
+    const notebookField = createField(
+      "笔记本 ID",
+      CONFIG.notebook,
+      "请输入笔记本 ID",
+    );
+    const parentPathField = createField(
+      "保存路径",
+      CONFIG.parentPath,
+      "例如：/ChatGPT同步",
+    );
+    const prefixField = createField(
+      "文档标题前缀",
+      CONFIG.docTitlePrefix,
+      "例如：ChatGPT会话-",
+    );
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.justifyContent = "flex-end";
+    actions.style.gap = "10px";
+    actions.style.marginTop = "18px";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.innerText = "取消";
+    cancelBtn.style.padding = "10px 14px";
+    cancelBtn.style.borderRadius = "10px";
+    cancelBtn.style.border = "1px solid #d1d5db";
+    cancelBtn.style.background = "#fff";
+    cancelBtn.style.cursor = "pointer";
+    cancelBtn.addEventListener("click", () => mask.remove());
+
+    const saveBtn = document.createElement("button");
+    saveBtn.innerText = "保存";
+    saveBtn.style.padding = "10px 14px";
+    saveBtn.style.borderRadius = "10px";
+    saveBtn.style.border = "none";
+    saveBtn.style.background = "#1677ff";
+    saveBtn.style.color = "#fff";
+    saveBtn.style.cursor = "pointer";
+    saveBtn.addEventListener("click", () => {
+      saveConfig({
+        siyuanBaseUrl: baseUrlField.input.value.trim() || DEFAULT_CONFIG.siyuanBaseUrl,
+        siyuanToken: tokenField.input.value.trim(),
+        notebook: notebookField.input.value.trim(),
+        parentPath: parentPathField.input.value.trim() || DEFAULT_CONFIG.parentPath,
+        docTitlePrefix: prefixField.input.value.trim() || DEFAULT_CONFIG.docTitlePrefix,
+      });
+      showToast("配置已保存");
+      mask.remove();
+    });
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(saveBtn);
+
+    [
+      title,
+      desc,
+      baseUrlField.wrapper,
+      tokenField.wrapper,
+      notebookField.wrapper,
+      parentPathField.wrapper,
+      prefixField.wrapper,
+      actions,
+    ].forEach((el, index) => {
+      if (index >= 2 && index <= 6) {
+        el.style.marginBottom = "12px";
+      }
+      modal.appendChild(el);
+    });
+
+    mask.appendChild(modal);
+    document.body.appendChild(mask);
+  }
+
+  function createSettingsButton() {
+    if (document.getElementById("config-to-siyuan-btn")) return;
+
+    const btn = document.createElement("button");
+    btn.id = "config-to-siyuan-btn";
+    btn.innerText = "设置思源";
+    btn.style.position = "fixed";
+    btn.style.right = "140px";
+    btn.style.bottom = "20px";
+    btn.style.zIndex = "999999";
+    btn.style.padding = "12px 16px";
+    btn.style.border = "none";
+    btn.style.borderRadius = "12px";
+    btn.style.background = "#4b5563";
+    btn.style.color = "#fff";
+    btn.style.fontSize = "14px";
+    btn.style.cursor = "pointer";
+    btn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.2)";
+    btn.addEventListener("click", openConfigModal);
+
+    document.body.appendChild(btn);
+  }
+
   function createSyncButton() {
     if (document.getElementById("sync-to-siyuan-btn")) return;
 
@@ -393,12 +614,19 @@
 
   async function init() {
     await sleep(2000);
+    if (typeof GM_registerMenuCommand === "function") {
+      GM_registerMenuCommand("设置思源配置", openConfigModal);
+    }
+    createSettingsButton();
     createSyncButton();
   }
 
   init();
 
   const observer = new MutationObserver(() => {
+    if (!document.getElementById("config-to-siyuan-btn")) {
+      createSettingsButton();
+    }
     if (!document.getElementById("sync-to-siyuan-btn")) {
       createSyncButton();
     }
